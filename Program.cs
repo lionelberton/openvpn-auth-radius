@@ -25,13 +25,13 @@ namespace auth
             if(Config.Settings == null)
             {
                 Console.WriteLine("Config is empty/unreadable");
-                return 1;
+                return 2;
             }
 
             if (Config.Settings.Servers == null || Config.Settings.Servers.Count == 0)
             {
                 Console.WriteLine("No servers found in config");
-                return 1;
+                return 3;
             }
 
             var res = Parallel.ForEach(Config.Settings.Servers.Cast<ServerElement>(), (server, state) =>
@@ -59,7 +59,7 @@ namespace auth
             if (res.IsCompleted) 
             { 
                 Console.WriteLine("Auth failed for: '{0}'", username);
-                return 1;
+                return 4;
             }
             else 
             {
