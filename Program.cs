@@ -37,11 +37,12 @@ namespace auth
         /// <summary>
         /// Entry point
         /// </summary>
+        /// <param name="args"></param>
         /// <returns></returns>
-        public static int Main()
+        public static int Main(string[] args)
         {
             _defaultLogFolder = Settings.Default.LogFolder;
-
+            string text = args[0];
             if (string.IsNullOrEmpty(_defaultLogFolder))
             {
                 return 5;
@@ -49,20 +50,24 @@ namespace auth
 
             InitLogger();
 
-            var username = Environment.GetEnvironmentVariable("username");
-            var password = Environment.GetEnvironmentVariable("password");
 
-            if (string.IsNullOrEmpty(username))
+            if (!File.Exists(text))
             {
-                Log.ErrorLog.WriteLine("environment variable 'username' is undefined undefined");
+                Log.ErrorLog.WriteLine($"file is not existing at path {text}");
                 return 1;
             }
 
-            if (string.IsNullOrEmpty(password))
+            string[] array = File.ReadAllLines(text);
+            if (array.Count() != 2)
+
             {
-                Log.ErrorLog.WriteLine("environment variable 'password' is undefined undefined");
+                Log.ErrorLog.WriteLine($"file {text} is not correct");
                 return 1;
             }
+
+            string userName = array[0];
+
+            string password = array[1];
 
             if (Config.Settings == null)
             {
@@ -87,7 +92,7 @@ namespace auth
 
                 try
                 {
-                    var authPacket = rc.Authenticate(username, password);
+                    var authPacket = rc.Authenticate(userName, password);
                     if (Config.Settings.NAS_IDENTIFIER != null)
                     {
                         authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
@@ -97,9 +102,27 @@ namespace auth
 
                     var receivedPacket = rc.SendAndReceivePacket(authPacket, server.retries).Result;
 
-                    if (receivedPacket != null && receivedPacket.PacketType == RadiusCode.ACCESS_ACCEPT)
+                    if (receivedPacket == null)
                     {
-                        state.Stop();
+                        Log.ErrorLog.WriteLine("Can't contact remote radius server !");
+                    }
+
+                    if (receivedPacket != null)
+                    {
+                        switch (receivedPacket.PacketType)
+                        {
+                            case RadiusCode.ACCESS_ACCEPT:
+                                state.Stop();
+                                break;
+                            case RadiusCode.ACCESS_CHALLENGE:
+                                Log.InformationLog.WriteLine("Access challenge");
+                                break;
+                            default:
+                                Log.InformationLog.WriteLine(receivedPacket.PacketType.ToString());
+                                break;
+                        }
+
+
                     }
 
                 }
@@ -113,12 +136,12 @@ namespace auth
             if (res.IsCompleted)
             {
                 //On a parcouru tous les srveurs et on n'a rien trouvé
-                Log.ErrorLog.WriteLine(string.Format("Authentication failed for: {0}", username));
+                Log.ErrorLog.WriteLine(string.Format("Authentication failed for: {0}", userName));
                 return 4;
             }
             else
             {
-                Log.SuccessLog.WriteLine(string.Format("Authentication success for user {0}", username));
+                Log.SuccessLog.WriteLine(string.Format("Authentication success for user {0}", userName));
                 return 0;
             }
         }
