@@ -38,9 +38,8 @@ namespace auth
         /// </summary>
         private enum fileContent
         {
-            userName,
-            password,
-            doublefactor
+            userName = 0,
+            password = 1,
         }
 
 
@@ -68,16 +67,34 @@ namespace auth
             }
 
             string[] array = File.ReadAllLines(text);
-            if (array.Count() != 2)
-
+            if (array.Length != 2)
             {
                 Log.ErrorLog.WriteLine($"file {text} is not correct");
                 return 1;
             }
 
             var userName = array[(int)fileContent.userName];
-            var password = array[(int)fileContent.password];
-            var doublefactor = array[(int)fileContent.doublefactor];
+            string password;
+            string doubleFactor = null;
+            if (array[(int)fileContent.password].Substring(0, 5) == "SCRV1")
+            {
+                var secondLineData = array[(int)fileContent.password].Split(':');
+                if (secondLineData.Length == 3)
+                {
+                    password = Encoding.UTF8.GetString(Convert.FromBase64String(secondLineData[1]));
+                    doubleFactor = Encoding.UTF8.GetString(Convert.FromBase64String(secondLineData[2]));
+                }
+                else
+                {
+                    Log.ErrorLog.WriteLine("Error in authentication");
+                    return 1;
+                }
+            }
+            else
+            {
+                password = array[(int)fileContent.password];
+            }
+
 
             if (Config.Settings == null)
             {
@@ -117,15 +134,46 @@ namespace auth
                         Log.ErrorLog.WriteLine("Can't contact remote radius server !");
                     }
 
+
+                    Log.InformationLog.WriteLine("Attributes");
+                    foreach (var attribute in receivedPacket.Attributes)
+                    {
+                        Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
+                    }
+
+
                     if (receivedPacket != null)
                     {
                         switch (receivedPacket.PacketType)
                         {
                             case RadiusCode.ACCESS_ACCEPT:
+                                if (!string.IsNullOrEmpty(doubleFactor))
+                                {
+                                    Log.SilentWarningLog.WriteLine("Double factor must be activated for the user " + userName);
+                                }
                                 state.Stop();
                                 break;
                             case RadiusCode.ACCESS_CHALLENGE:
                                 Log.InformationLog.WriteLine("Access challenge");
+                                var packet = new RadiusPacket(RadiusCode.ACCESS_REQUEST);
+                                packet.SetAttribute(receivedPacket.Attributes.First(x => x.Type == RadiusAttributeType.STATE));
+                                packet.SetAuthenticator(server.sharedsecret);
+                                byte[] data = Utils.EncodePapPassword(Encoding.ASCII.GetBytes(doubleFactor), packet.Authenticator, server.sharedsecret);
+                                packet.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_PASSWORD, data));
+                                var returnPacket = rc.SendAndReceivePacket(packet).Result;
+
+                                if (returnPacket == null)
+                                {
+                                    Log.ErrorLog.WriteLine("Return packet is null");
+                                }
+                                else
+                                {
+                                    Log.InformationLog.WriteLine("Packet type: " + returnPacket.PacketType);
+                                    if (returnPacket.PacketType == RadiusCode.ACCESS_ACCEPT)
+                                    {
+                                        state.Stop();
+                                    }
+                                }
                                 break;
                             default:
                                 Log.InformationLog.WriteLine(receivedPacket.PacketType.ToString());
