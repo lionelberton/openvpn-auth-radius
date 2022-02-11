@@ -33,6 +33,16 @@ namespace auth
         /// </summary>
         private static LogMessageBase _applicationLogWriterInstance;
 
+        /// <summary>
+        /// The contents
+        /// </summary>
+        private enum fileContent
+        {
+            userName,
+            password,
+            doublefactor
+        }
+
 
         /// <summary>
         /// Entry point
@@ -65,9 +75,9 @@ namespace auth
                 return 1;
             }
 
-            string userName = array[0];
-
-            string password = array[1];
+            var userName = array[(int)fileContent.userName];
+            var password = array[(int)fileContent.password];
+            var doublefactor = array[(int)fileContent.doublefactor];
 
             if (Config.Settings == null)
             {
