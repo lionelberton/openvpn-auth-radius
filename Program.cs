@@ -36,69 +36,100 @@ namespace auth
         /// <summary>
         /// The contents
         /// </summary>
-        private enum fileContent
+        private enum FileContent
         {
+            /// <summary>
+            /// The user name
+            /// </summary>
             userName = 0,
+            /// <summary>
+            /// The password
+            /// </summary>
+            /// <remarks>if the double factor is used, the second line contains password and double facor encoded in base 64. If not the password in clear</remarks>
             password = 1,
+        }
+
+        /// <summary>
+        /// The authetication data
+        /// </summary>
+        private enum AuthenticationData
+        {
+            /// <summary>
+            /// SCRV1
+            /// </summary>
+            SCRV1 = 0,
+            /// <summary>
+            /// The password encoded in base 64
+            /// </summary>
+            PasswordBased64,
+            /// <summary>
+            /// The response encoded in base 64
+            /// </summary>
+            ResponseBased64
         }
 
 
         /// <summary>
         /// Entry point
         /// </summary>
-        /// <param name="args"></param>
+        /// <param name="args">Contains the path of the file with connection info (using via file)</param>
         /// <returns></returns>
         public static int Main(string[] args)
         {
             _defaultLogFolder = Settings.Default.LogFolder;
-            string text = args[0];
+            var path = args[0];
             if (string.IsNullOrEmpty(_defaultLogFolder))
             {
+                Log.ErrorLog.WriteLine("No folder defined for the logs.");
                 return 5;
             }
 
             InitLogger();
 
-
-            if (!File.Exists(text))
+            if (!File.Exists(path))
             {
-                Log.ErrorLog.WriteLine($"file is not existing at path {text}");
+                Log.ErrorLog.WriteLine($"file is not existing at path {path}");
                 return 1;
             }
 
-            string[] array = File.ReadAllLines(text);
+            //The file must contains two lines
+            var array = File.ReadAllLines(path);
             if (array.Length != 2)
             {
-                Log.ErrorLog.WriteLine($"file {text} is not correct");
-                return 1;
+                Log.ErrorLog.WriteLine($"file {path} is not correct");
+                return 6;
             }
 
-            var userName = array[(int)fileContent.userName];
+            //user name is on first row
+            var userName = array[(int)FileContent.userName];
             string password;
             string doubleFactor = null;
-            if (array[(int)fileContent.password].Substring(0, 5) == "SCRV1")
+            //If the second row strat with SCRV1, the MFA is activated
+            if (array[(int)FileContent.password].Substring(0, 5) == "SCRV1")
             {
-                var secondLineData = array[(int)fileContent.password].Split(':');
+                //we need to split on ':' to retrieve password and MFA code
+                //structure SCRV1:base64_pass:base64_response
+                var secondLineData = array[(int)FileContent.password].Split(':');
                 if (secondLineData.Length == 3)
                 {
-                    password = Encoding.UTF8.GetString(Convert.FromBase64String(secondLineData[1]));
-                    doubleFactor = Encoding.UTF8.GetString(Convert.FromBase64String(secondLineData[2]));
+                    password = Encoding.UTF8.GetString(Convert.FromBase64String(secondLineData[(int)AuthenticationData.PasswordBased64]));
+                    doubleFactor = Encoding.UTF8.GetString(Convert.FromBase64String(secondLineData[(int)AuthenticationData.ResponseBased64]));
                 }
                 else
                 {
-                    Log.ErrorLog.WriteLine("Error in authentication");
-                    return 1;
+                    Log.ErrorLog.WriteLine("Error in authentication. The password row doesn't contains the requested elements.");
+                    return 7;
                 }
             }
             else
             {
-                password = array[(int)fileContent.password];
+                password = array[(int)FileContent.password];
             }
 
 
             if (Config.Settings == null)
             {
-                Log.ErrorLog.WriteLine("Config is empty/unreadable");
+                Log.ErrorLog.WriteLine("The plugin configuration is empty/unreadable");
                 return 2;
             }
 
@@ -115,7 +146,7 @@ namespace auth
 
                 var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport);
 
-                Log.InformationLog.WriteLine("Radius client initializated");
+                Log.InformationLog.WriteLine("Radius client is initializated.");
 
                 try
                 {
@@ -131,52 +162,56 @@ namespace auth
 
                     if (receivedPacket == null)
                     {
-                        Log.ErrorLog.WriteLine("Can't contact remote radius server !");
+                        Log.ErrorLog.WriteLine("Can't contact remote radius server {0}!", server.Name);
                     }
 
 
-                    Log.InformationLog.WriteLine("Attributes");
+                    Log.InformationLog.WriteLine("List of the attributes received");
                     foreach (var attribute in receivedPacket.Attributes)
                     {
                         Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
                     }
 
-
                     if (receivedPacket != null)
                     {
+                        //Depending of the packet response type, we have to manage different cases
                         switch (receivedPacket.PacketType)
                         {
+                            //MFA not activated. The access is granted
                             case RadiusCode.ACCESS_ACCEPT:
                                 if (!string.IsNullOrEmpty(doubleFactor))
                                 {
-                                    Log.SilentWarningLog.WriteLine("Double factor must be activated for the user " + userName);
+                                    Log.SilentWarningLog.WriteLine("Double factor must be activated for the user {0}", userName);
                                 }
                                 state.Stop();
                                 break;
+                            //A radius challenge is requested
                             case RadiusCode.ACCESS_CHALLENGE:
-                                Log.InformationLog.WriteLine("Access challenge");
+                                Log.InformationLog.WriteLine("Starting the access challenge for user {0}", userName);
                                 var packet = new RadiusPacket(RadiusCode.ACCESS_REQUEST);
                                 packet.SetAttribute(receivedPacket.Attributes.First(x => x.Type == RadiusAttributeType.STATE));
                                 packet.SetAuthenticator(server.sharedsecret);
                                 byte[] data = Utils.EncodePapPassword(Encoding.ASCII.GetBytes(doubleFactor), packet.Authenticator, server.sharedsecret);
                                 packet.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_PASSWORD, data));
-                                var returnPacket = rc.SendAndReceivePacket(packet).Result;
+                                var returnPacketForChallenge = rc.SendAndReceivePacket(packet).Result;
 
-                                if (returnPacket == null)
+                                if (returnPacketForChallenge == null)
                                 {
-                                    Log.ErrorLog.WriteLine("Return packet is null");
+                                    Log.ErrorLog.WriteLine("Return packet for RADIUS challenge is null for user {0}.", userName);
                                 }
                                 else
                                 {
-                                    Log.InformationLog.WriteLine("Packet type: " + returnPacket.PacketType);
-                                    if (returnPacket.PacketType == RadiusCode.ACCESS_ACCEPT)
+                                    Log.InformationLog.WriteLine("Packet type: " + returnPacketForChallenge.PacketType);
+                                    //If the Radius challenge is completed, the packet type must be access_accept
+                                    if (returnPacketForChallenge.PacketType == RadiusCode.ACCESS_ACCEPT)
                                     {
                                         state.Stop();
                                     }
                                 }
                                 break;
+                            //Other cases
                             default:
-                                Log.InformationLog.WriteLine(receivedPacket.PacketType.ToString());
+                                Log.InformationLog.WriteLine("Packet type received is {0}", receivedPacket.PacketType.ToString());
                                 break;
                         }
 
