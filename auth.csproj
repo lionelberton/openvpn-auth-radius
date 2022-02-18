@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net472</TargetFramework>
+    <TargetFramework>net6.0</TargetFramework>
     <AssemblyTitle>OpenVPNRadius</AssemblyTitle>
     <Product>OpenVPNRadius</Product>
     <Platforms>AnyCPU</Platforms>
@@ -13,9 +13,8 @@
     <FileVersion>1.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Radius" Version="2.0.0.2">
-    </PackageReference>
-    <Reference Include="System.Configuration" />
+    <PackageReference Include="RadiusClient" Version="1.0.0" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="6.0.0" />
   </ItemGroup>
   <ItemGroup>
     <Compile Update="Properties\Settings.Designer.cs">

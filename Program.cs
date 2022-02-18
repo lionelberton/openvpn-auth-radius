@@ -7,7 +7,9 @@ using System.Text;
 using System.Threading.Tasks;
 using auth.Logs;
 using auth.Properties;
-using FP.Radius;
+using Radius;
+using Radius.Atributes;
+using Radius.Enums;
 
 namespace auth
 {
