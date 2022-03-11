@@ -343,51 +343,60 @@ namespace auth
 
             if (!string.IsNullOrEmpty(commonName) && !string.IsNullOrEmpty(ipAddress))
             {
-
-                var res = Parallel.ForEach(Config.Settings.Servers.Cast<ServerElement>(), (server, state) =>
+                try
                 {
-                    var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
 
-                    var accountingPacket = new RadiusPacket(RadiusCode.ACCOUNTING_REQUEST);
-                    accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, BitConverter.GetBytes((int)acct_Status_Type)));
-                    accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_SESSION_ID, Encoding.UTF8.GetBytes(commonName)));
-                    accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, BitConverter.GetBytes((int)Acct_Authentic.Radius)));
-                    accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.FRAMED_IP_ADDRESS, Encoding.UTF8.GetBytes(ipAddress)));
-
-                    if (acct_Status_Type == Acct_Status_Type.Stop)
+                    var res = Parallel.ForEach(Config.Settings.Servers.Cast<ServerElement>(), (server, state) =>
                     {
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, BitConverter.GetBytes((int)Acct_Terminate_Cause.UserRequest)));
-                    }
+                        var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
 
-                    var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket).Result;
+                        var accountingPacket = new RadiusPacket(RadiusCode.ACCOUNTING_REQUEST);
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, BitConverter.GetBytes((int)acct_Status_Type)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_SESSION_ID, Encoding.UTF8.GetBytes(commonName)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, BitConverter.GetBytes((int)Acct_Authentic.Radius)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.FRAMED_IP_ADDRESS, Encoding.UTF8.GetBytes(ipAddress)));
 
-                    if (accountingPacketResponse.PacketType != RadiusCode.ACCOUNTING_RESPONSE)
+                        if (acct_Status_Type == Acct_Status_Type.Stop)
+                        {
+                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, BitConverter.GetBytes((int)Acct_Terminate_Cause.UserRequest)));
+                        }
+
+                        var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket).Result;
+
+                        if (accountingPacketResponse.PacketType != RadiusCode.ACCOUNTING_RESPONSE)
+                        {
+                            Log.ErrorLog.WriteLine("The response packet type for the accounting request of type {0} for user {1} is not correct.",
+                                (int)acct_Status_Type, commonName);
+
+                            state.Stop();
+                        }
+                        else
+                        {
+                            Log.InformationLog.WriteLine("List of the attributes received for the accounting request of type {0} for user {1}.",
+                                (int)acct_Status_Type, commonName);
+                            foreach (var attribute in accountingPacketResponse.Attributes)
+                            {
+                                Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
+                            }
+                        }
+                    });
+
+                    if (res.IsCompleted)
                     {
-                        Log.ErrorLog.WriteLine("The response packet type for the accounting request of type {0} for user {1} is not correct.",
-                            (int)acct_Status_Type, commonName);
-
-                        state.Stop();
+                        //On a parcouru tous les srveurs et on n'a rien trouvé
+                        Log.ErrorLog.WriteLine(string.Format("Accounting {0}  failed for: {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
+                        return 4;
                     }
                     else
                     {
-                        Log.InformationLog.WriteLine("List of the attributes received for the accounting request of type {0} for user {1}.",
-                            (int)acct_Status_Type, commonName);
-                        foreach (var attribute in accountingPacketResponse.Attributes)
-                        {
-                            Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
-                        }
+                        Log.SuccessLog.WriteLine(string.Format("Accounting {0} success for user {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
+                        return 0;
                     }
-                });
-
-                if (res.IsCompleted)
-                {
-                    //On a parcouru tous les srveurs et on n'a rien trouvé
-                    Log.ErrorLog.WriteLine(string.Format("Accounting {0}  failed for: {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
-                    return 4;
                 }
-                else
+                catch (Exception ex)
                 {
-                    Log.SuccessLog.WriteLine(string.Format("Accounting {0} success for user {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
+                    Log.ErrorLog.WriteLine("Error during sending accounting request");
+                    Log.ErrorLog.WriteLine(ex);
                     return 0;
                 }
             }
