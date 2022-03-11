@@ -351,8 +351,15 @@ namespace auth
                         var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
 
                         var accountingPacket = new RadiusPacket(RadiusCode.ACCOUNTING_REQUEST);
+
+                        if (Config.Settings.NAS_IDENTIFIER != null)
+                        {
+                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
+                        }
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, BitConverter.GetBytes((int)NasPortType.ASYNC)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, BitConverter.GetBytes((int)acct_Status_Type)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_SESSION_ID, Encoding.UTF8.GetBytes(commonName)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_NAME, Encoding.UTF8.GetBytes(commonName)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, BitConverter.GetBytes((int)Acct_Authentic.Radius)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.FRAMED_IP_ADDRESS, Encoding.UTF8.GetBytes(ipAddress)));
 
@@ -361,31 +368,45 @@ namespace auth
                             accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, BitConverter.GetBytes((int)Acct_Terminate_Cause.UserRequest)));
                         }
 
-                        var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket).Result;
+                        Log.InformationLog.WriteLine("Set the authenticator");
+                        accountingPacket.SetAuthenticator(server.sharedsecret);
 
-                        if (accountingPacketResponse.PacketType != RadiusCode.ACCOUNTING_RESPONSE)
+                        var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket ,server.retries).Result;
+
+                        if (accountingPacketResponse != null)
                         {
-                            Log.ErrorLog.WriteLine("The response packet type for the accounting request of type {0} for user {1} is not correct.",
-                                (int)acct_Status_Type, commonName);
-
-                            state.Stop();
+                            if (accountingPacketResponse.PacketType != RadiusCode.ACCOUNTING_RESPONSE)
+                            {
+                                Log.ErrorLog.WriteLine("The response packet type for the accounting request of type {0} for user {1} is not correct on server {2}.",
+                                    (int)acct_Status_Type, commonName, server.Name);
+                                foreach (var attribute in accountingPacketResponse.Attributes)
+                                {
+                                    Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
+                                }
+                            }
+                            else
+                            {
+                                Log.InformationLog.WriteLine("List of the attributes received for the accounting request of type {0} for user {1} on server {2}.",
+                                    (int)acct_Status_Type, commonName, server.Name);
+                                foreach (var attribute in accountingPacketResponse.Attributes)
+                                {
+                                    Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
+                                }
+                                state.Stop();
+                            }
                         }
                         else
                         {
-                            Log.InformationLog.WriteLine("List of the attributes received for the accounting request of type {0} for user {1}.",
-                                (int)acct_Status_Type, commonName);
-                            foreach (var attribute in accountingPacketResponse.Attributes)
-                            {
-                                Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
-                            }
+                            Log.ErrorLog.WriteLine("accounting response is null on server {0}", server.Name);
                         }
                     });
 
                     if (res.IsCompleted)
                     {
-                        //On a parcouru tous les srveurs et on n'a rien trouvé
+                        //On a parcouru tous les serveurs et on n'a rien trouvé
                         Log.ErrorLog.WriteLine(string.Format("Accounting {0}  failed for: {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
-                        return 4;
+                        //Mettre une valeur > 0 quand debuggge fini
+                        return 0;
                     }
                     else
                     {
@@ -397,6 +418,7 @@ namespace auth
                 {
                     Log.ErrorLog.WriteLine("Error during sending accounting request");
                     Log.ErrorLog.WriteLine(ex);
+                    //Mettre une valeur > 0 quand debuggge fini
                     return 0;
                 }
             }
@@ -410,6 +432,7 @@ namespace auth
                 {
                     Log.ErrorLog.WriteLine("The environment variable for trusted_ip is null. Unable to send an accounting request.");
                 }
+                //Mettre une valeur > 0 quand debuggge fini
                 return 0;
             }
 
