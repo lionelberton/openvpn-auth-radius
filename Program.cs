@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -70,6 +71,65 @@ namespace auth
             ResponseBased64
         }
 
+        /// <summary>
+        /// Enum that represents the Acct status type
+        /// </summary>
+        private enum Acct_Status_Type
+        {
+            Start = 1,
+            Stop = 2,
+            InterimUpdate = 3,
+            AccountingOn = 7,
+            AccountingOff = 8
+        }
+
+        /// <summary>
+        /// Enum to indicates the method with which the user's declared identity was verified
+        /// </summary>
+        private enum Acct_Authentic
+        {
+            Radius = 1,
+            Local = 2,
+            Remote
+        }
+
+        /// <summary>
+        /// Enums to indicates the acct terminate cause
+        /// </summary>
+        private enum Acct_Terminate_Cause
+        {
+            /// <summary>
+            /// The user initiated the termination by logging off
+            /// </summary>
+            UserRequest = 1,
+            LostCarrier = 2,
+            LostService = 3,
+            IdleTimeout = 4,
+            SessionTimeout = 5,
+            AdminReset = 6,
+            AdminReboot = 7,
+            PortError = 8,
+            NASError = 9,
+            NASRequest = 10,
+            NASReboot = 11,
+            PortUnneeded = 12,
+            PortPreempted = 13
+        }
+
+        /// <summary>
+        /// Constant to name the use of authentication mode
+        /// </summary>
+        private const string Authentication = "Authentication";
+
+        /// <summary>
+        /// Constant to name the use of Client connect mode
+        /// </summary>
+        private const string ClientConnect = "ClientConnect";
+
+        /// <summary>
+        /// Constant to name the use of Client disconnect mode
+        /// </summary>
+        private const string ClientDisconnect = "ClientDisconnect";
 
         /// <summary>
         /// Entry point
@@ -79,7 +139,7 @@ namespace auth
         public static int Main(string[] args)
         {
             _defaultLogFolder = Settings.Default.LogFolder;
-            var path = args[0];
+
             if (string.IsNullOrEmpty(_defaultLogFolder))
             {
                 Log.ErrorLog.WriteLine("No folder defined for the logs.");
@@ -87,6 +147,33 @@ namespace auth
             }
 
             InitLogger();
+
+            switch (args[0])
+            {
+                case Authentication:
+                    return OpenVPNAuthenticate(args);
+                case ClientConnect:
+                    return SendAccountingRequest(Acct_Status_Type.Start);
+                case ClientDisconnect:
+                    return SendAccountingRequest(Acct_Status_Type.Stop);
+                default:
+                    Log.ErrorLog.WriteLine("First argument is not correct. Use 'Authentication', 'ClientConnect' or 'ClientDisconnect' ");
+                    return 8;
+
+            }
+        }
+
+
+        /// <summary>
+        /// Autheticate the connection
+        /// </summary>
+        /// <param name="args">the arguments</param>
+        /// <returns></returns>
+        private static int OpenVPNAuthenticate(string[] args)
+        {
+            //The first argument is used to determine which type of request is sent by OpenVPN
+            //as we are using via file option, the second argument contains the path of a temporary file
+            var path = args[1];
 
             if (!File.Exists(path))
             {
@@ -146,7 +233,7 @@ namespace auth
                 Log.InformationLog.WriteLine(string.Format("server name = {0} , retries = {1}, wait = {2}, autport = {3}",
                                                             server.Name, server.retries, server.wait, server.authport));
 
-                var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport);
+                var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
 
                 Log.InformationLog.WriteLine("Radius client is initializated.");
 
@@ -241,6 +328,68 @@ namespace auth
             }
         }
 
+
+
+        /// <summary>
+        /// Send an accounting request
+        /// </summary>
+        /// <param name="acct_Status_Type"> the type (start or stop)</param>
+        private static int SendAccountingRequest(Acct_Status_Type acct_Status_Type)
+        {
+            //The first argument is used to determine which type of request is sent by OpenVPN
+            //In accounting mode (used by client_connect and client disconnect, the second and third parameters are the common name and the IP Address of the requester
+            var commonName = Environment.GetEnvironmentVariable("common_name");
+            var ipAddress = Environment.GetEnvironmentVariable("trusted_ip");
+
+            var res = Parallel.ForEach(Config.Settings.Servers.Cast<ServerElement>(), (server, state) =>
+            {
+                var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
+
+                var accountingPacket = new RadiusPacket(RadiusCode.ACCOUNTING_REQUEST);
+                accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, BitConverter.GetBytes((int)acct_Status_Type)));
+                accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_SESSION_ID, Encoding.UTF8.GetBytes(commonName)));
+                accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, BitConverter.GetBytes((int)Acct_Authentic.Radius)));
+                accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.FRAMED_IP_ADDRESS, Encoding.UTF8.GetBytes(ipAddress)));
+
+                if (acct_Status_Type == Acct_Status_Type.Stop)
+                {
+                    accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, BitConverter.GetBytes((int)Acct_Terminate_Cause.UserRequest)));
+                }
+
+                var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket).Result;
+
+                if (accountingPacketResponse.PacketType != RadiusCode.ACCOUNTING_RESPONSE)
+                {
+                    Log.ErrorLog.WriteLine("The response packet type for the accounting request of type {0} for user {1} is not correct.",
+                        (int)acct_Status_Type, commonName);
+
+                    state.Stop();
+                }
+                else
+                {
+                    Log.InformationLog.WriteLine("List of the attributes received for the accounting request of type {0} for user {1}.",
+                        (int)acct_Status_Type, commonName);
+                    foreach (var attribute in accountingPacketResponse.Attributes)
+                    {
+                        Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
+                    }
+                }
+            });
+
+            if (res.IsCompleted)
+            {
+                //On a parcouru tous les srveurs et on n'a rien trouvé
+                Log.ErrorLog.WriteLine(string.Format("Accounting {0}  failed for: {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
+                return 4;
+            }
+            else
+            {
+                Log.SuccessLog.WriteLine(string.Format("Accounting {0} success for user {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
+                return 0;
+            }
+
+        }
+
         /// <summary>
         /// Init the logger
         /// </summary>
@@ -257,11 +406,66 @@ namespace auth
             new ExceptionLogger(errorLogPath);
             _applicationLogWriterInstance = new LogMessageBase(applicationLogPath);
 
+            DeleteOldLogFiles(_defaultLogFolder, ErrorLogPrefixName, 30, 30);
+            DeleteOldLogFiles(_defaultLogFolder, ApplicationLogPrefixName, 30, 30);
+
             Log.Instance.InformationLogBase = new ApplicationLogBase(true, StatusLevel.Information, _applicationLogWriterInstance);
             Log.Instance.SilentWarningLogBase = new ApplicationLogBase(true, StatusLevel.Warning, _applicationLogWriterInstance);
             Log.Instance.DisplayWarningLogBase = new ApplicationLogBase(true, StatusLevel.Warning, _applicationLogWriterInstance);
             Log.Instance.ErrorLogBase = new ApplicationLogBase(true, StatusLevel.Error, _applicationLogWriterInstance);
             Log.Instance.SuccessLogBase = new ApplicationLogBase(true, StatusLevel.Success, _applicationLogWriterInstance);
+        }
+
+        /// <summary>
+        /// Deletes the old log files.
+        /// </summary>
+        /// <param name="folderPath">The folder path.</param>
+        /// <param name="filePrefix">The file prefix.</param>
+        /// <param name="days">The days.</param>
+        /// <param name="maxCount">The maximum count.</param>
+        private static void DeleteOldLogFiles(string folderPath, string filePrefix, int days, int maxCount)
+        {
+            var filesWithDates = new Dictionary<string, DateTimeOffset>();
+            var thresholdDate = DateTime.Now.AddDays(-days);
+            foreach (var filePath in Directory.EnumerateFiles(folderPath, filePrefix + "*.txt", SearchOption.TopDirectoryOnly))
+            {
+                var fileName = Path.GetFileName(filePath);
+                var fileSplit = fileName.Split('_');
+                if (fileSplit.Length == 4 && fileSplit[0].Equals(filePrefix, StringComparison.InvariantCulture))
+                {
+                    var lastTime = File.GetLastWriteTime(filePath);
+                    if (lastTime < thresholdDate)
+                    {
+                        DeleteFile(filePath);
+                    }
+                    else
+                    {
+                        filesWithDates[filePath] = lastTime;
+                    }
+                }
+            }
+            foreach (var fileWithDate in filesWithDates.OrderByDescending(fwd => fwd.Value).Skip(maxCount))
+            {
+                DeleteFile(fileWithDate.Key);
+            }
+        }
+
+        /// <summary>
+        /// Deletes the file.
+        /// </summary>
+        /// <param name="filePath">The file path.</param>
+        private static void DeleteFile(string filePath)
+        {
+            try
+            {
+                File.Delete(filePath);
+            }
+#pragma warning disable RECS0022 // A catch clause that catches System.Exception and has an empty body
+            catch
+#pragma warning restore RECS0022 // A catch clause that catches System.Exception and has an empty body
+            {
+                //si on peut pas supprimé c'est pas grave, c'est juste pour nettoyer. L'admin le fera à la main.
+            }
         }
 
         /// <summary>

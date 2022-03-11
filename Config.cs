@@ -27,6 +27,9 @@ namespace auth
         [ConfigurationProperty("authport", DefaultValue = (uint) 1812, IsRequired = false)]
         public uint authport { get { return (uint)base["authport"]; } }
 
+        [ConfigurationProperty("acctport", DefaultValue = (uint)1813, IsRequired = false)]
+        public uint acctport { get { return (uint)base["acctport"]; } }
+
         [ConfigurationProperty("retries", DefaultValue = 1, IsRequired = false)]
         public int retries { get { return (int)base["retries"]; } }
 
