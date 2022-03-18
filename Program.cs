@@ -147,19 +147,26 @@ namespace auth
             }
 
             InitLogger();
-
-            switch (args[0])
+            if (args != null)
             {
-                case Authentication:
-                    return OpenVPNAuthenticate(args);
-                case ClientConnect:
-                    return SendAccountingRequest(Acct_Status_Type.Start);
-                case ClientDisconnect:
-                    return SendAccountingRequest(Acct_Status_Type.Stop);
-                default:
-                    Log.ErrorLog.WriteLine("First argument is not correct. Use 'Authentication', 'ClientConnect' or 'ClientDisconnect' ");
-                    return 8;
+                switch (args[0])
+                {
+                    case Authentication:
+                        return OpenVPNAuthenticate(args);
+                    case ClientConnect:
+                        return SendAccountingRequest(Acct_Status_Type.Start);
+                    case ClientDisconnect:
+                        return SendAccountingRequest(Acct_Status_Type.Stop);
+                    default:
+                        Log.ErrorLog.WriteLine("First argument is not correct. Use 'Authentication', 'ClientConnect' or 'ClientDisconnect' ");
+                        return 8;
 
+                }
+            }
+            else
+            {
+                Log.ErrorLog.WriteLine("atgument cannot be null. Use 'Authentication', 'ClientConnect' or 'ClientDisconnect' ");
+                return 8;
             }
         }
 
@@ -245,7 +252,7 @@ namespace auth
                         authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
                     }
 
-                    authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, BitConverter.GetBytes((int)NasPortType.ASYNC)));
+                    authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
 
                     var receivedPacket = rc.SendAndReceivePacket(authPacket, server.retries).Result;
 
@@ -351,21 +358,27 @@ namespace auth
                         var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
 
                         var accountingPacket = new RadiusPacket(RadiusCode.ACCOUNTING_REQUEST);
-
+                        //Int Attributes must be Big-endian cf https://www.ietf.org/rfc/rfc2865.txt page 24
                         if (Config.Settings.NAS_IDENTIFIER != null)
                         {
                             accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
                         }
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, BitConverter.GetBytes((int)NasPortType.ASYNC)));
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, BitConverter.GetBytes((int)acct_Status_Type)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE,Utils.GetNetworkBytes( (int)acct_Status_Type)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_SESSION_ID, Encoding.UTF8.GetBytes(commonName)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_NAME, Encoding.UTF8.GetBytes(commonName)));
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, BitConverter.GetBytes((int)Acct_Authentic.Radius)));
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.FRAMED_IP_ADDRESS, Encoding.UTF8.GetBytes(ipAddress)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, Utils.GetNetworkBytes((int)Acct_Authentic.Radius)));
+                        var address = ipAddress.Split(".");
+                        var ipAsByteArray=new byte[4];
+                        for( var i=0;i<address.Length;i++)
+                        {
+                            ipAsByteArray[i] = (Byte)int.Parse(address[i]);
+                        }
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.FRAMED_IP_ADDRESS, ipAsByteArray));
 
                         if (acct_Status_Type == Acct_Status_Type.Stop)
                         {
-                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, BitConverter.GetBytes((int)Acct_Terminate_Cause.UserRequest)));
+                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, Utils.GetNetworkBytes((int)Acct_Terminate_Cause.UserRequest)));
                         }
 
                         Log.InformationLog.WriteLine("Set the authenticator");
