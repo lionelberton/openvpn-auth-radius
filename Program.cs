@@ -375,6 +375,7 @@ namespace auth
                             ipAsByteArray[i] = (Byte)int.Parse(address[i]);
                         }
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.FRAMED_IP_ADDRESS, ipAsByteArray));
+                        accountingPacket.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, ipAddress));
 
                         if (acct_Status_Type == Acct_Status_Type.Stop)
                         {
