@@ -298,6 +298,11 @@ namespace auth
                                 else
                                 {
                                     Log.InformationLog.WriteLine("Packet type: " + returnPacketForChallenge.PacketType);
+                                    Log.InformationLog.WriteLine("Attributes");
+                                    foreach (var attribute in returnPacketForChallenge.Attributes)
+                                    {
+                                        Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
+                                    }
                                     //If the Radius challenge is completed, the packet type must be access_accept
                                     if (returnPacketForChallenge.PacketType == RadiusCode.ACCESS_ACCEPT)
                                     {
