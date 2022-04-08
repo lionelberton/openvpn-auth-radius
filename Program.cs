@@ -143,7 +143,6 @@ namespace auth
 
             if (string.IsNullOrEmpty(_defaultLogFolder))
             {
-                Log.ErrorLog.WriteLine("No folder defined for the logs.");
                 return 5;
             }
 
@@ -247,7 +246,7 @@ namespace auth
 
                 try
                 {
-                    WriteEnvironmentVariables("before authentication");
+                    //WriteEnvironmentVariables("before authentication");
                     var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
 
                     var authPacket = rc.Authenticate(userName, password);
@@ -280,7 +279,7 @@ namespace auth
                         {
                             //MFA not activated. The access is granted
                             case RadiusCode.ACCESS_ACCEPT:
-                                WriteEnvironmentVariables("On access accept");
+                                //WriteEnvironmentVariables("On access accept");
                                 if (!string.IsNullOrEmpty(doubleFactor))
                                 {
                                     Log.SilentWarningLog.WriteLine("Double factor must be activated for the user {0}", userName);
@@ -289,7 +288,7 @@ namespace auth
                                 break;
                             //A radius challenge is requested
                             case RadiusCode.ACCESS_CHALLENGE:
-                                WriteEnvironmentVariables("starting access challenge");
+                                //WriteEnvironmentVariables("starting access challenge");
                                 Log.InformationLog.WriteLine("Starting the access challenge for user {0}", userName);
                                 var packet = new RadiusPacket(RadiusCode.ACCESS_REQUEST);
                                 packet.SetAttribute(receivedPacket.Attributes.First(x => x.Type == RadiusAttributeType.STATE));
@@ -299,7 +298,7 @@ namespace auth
                                 packet.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
                                 var returnPacketForChallenge = rc.SendAndReceivePacket(packet).Result;
 
-                                WriteEnvironmentVariables("after access challenge");
+                                //WriteEnvironmentVariables("after access challenge");
 
                                 if (returnPacketForChallenge == null)
                                 {
@@ -361,16 +360,15 @@ namespace auth
             //The first argument is used to determine which type of request is sent by OpenVPN
             //In accounting mode (used by client_connect and client disconnect, the second and third parameters are the common name and the IP Address of the requester
             var commonName = Environment.GetEnvironmentVariable("common_name");
-            var ipAddress = Environment.GetEnvironmentVariable("trusted_ip");
+            var privateIpAddress = Environment.GetEnvironmentVariable("ifconfig_pool_remote_ip");
             var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
-            var byteReceived = Environment.GetEnvironmentVariable("bytes_received");
-            var bytesSent = Environment.GetEnvironmentVariable("bytes_sent");
+            var sessionId = Environment.GetEnvironmentVariable("session_id");
 
-            if (!string.IsNullOrEmpty(commonName) && !string.IsNullOrEmpty(ipAddress))
+            if (!string.IsNullOrEmpty(commonName) && !string.IsNullOrEmpty(privateIpAddress))
             {
                 try
                 {
-                    WriteEnvironmentVariables(string.Format("at acounting {0}", acct_Status_Type==Acct_Status_Type.Start ? "start": "stop" ));
+                    //WriteEnvironmentVariables(string.Format("at acounting {0}", acct_Status_Type==Acct_Status_Type.Start ? "start": "stop" ));
                     var res = Parallel.ForEach(Config.Settings.Servers.Cast<ServerElement>(), (server, state) =>
                     {
                         var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
@@ -382,13 +380,13 @@ namespace auth
                             accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
                         }
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE,Utils.GetNetworkBytes( (int)acct_Status_Type)));
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_SESSION_ID, Encoding.UTF8.GetBytes(ipAddress)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, Utils.GetNetworkBytes((int)acct_Status_Type)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_SESSION_ID, Encoding.UTF8.GetBytes(sessionId)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_NAME, Encoding.UTF8.GetBytes(commonName)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, Utils.GetNetworkBytes((int)Acct_Authentic.Radius)));
-                        var address = ipAddress.Split(".");
-                        var ipAsByteArray=new byte[4];
-                        for( var i=0;i<address.Length;i++)
+                        var address = privateIpAddress.Split(".");
+                        var ipAsByteArray = new byte[4];
+                        for (var i = 0; i < address.Length; i++)
                         {
                             ipAsByteArray[i] = (Byte)int.Parse(address[i]);
                         }
@@ -398,6 +396,8 @@ namespace auth
                         if (acct_Status_Type == Acct_Status_Type.Stop)
                         {
                             // les attributs suivants ne doivent être settés que lors de Accounting stop
+                            var byteReceived = Environment.GetEnvironmentVariable("bytes_received");
+                            var bytesSent = Environment.GetEnvironmentVariable("bytes_sent");
                             accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, Utils.GetNetworkBytes((int)Acct_Terminate_Cause.UserRequest)));
                             accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_INPUT_OCTETS, Utils.GetNetworkBytes(int.Parse(byteReceived))));
                             accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_OUTPUT_OCTETS, Utils.GetNetworkBytes(int.Parse(bytesSent))));
@@ -406,7 +406,7 @@ namespace auth
                         Log.InformationLog.WriteLine("Set the authenticator");
                         accountingPacket.SetAuthenticator(server.sharedsecret);
 
-                        var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket ,server.retries).Result;
+                        var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket, server.retries).Result;
 
                         if (accountingPacketResponse != null)
                         {
@@ -463,7 +463,7 @@ namespace auth
                 {
                     Log.ErrorLog.WriteLine("The environment variable for common_name is null. Unable to send an accounting request.");
                 }
-                if (string.IsNullOrEmpty(ipAddress))
+                if (string.IsNullOrEmpty(privateIpAddress))
                 {
                     Log.ErrorLog.WriteLine("The environment variable for trusted_ip is null. Unable to send an accounting request.");
                 }
