@@ -247,18 +247,18 @@ namespace auth
                 try
                 {
                     //WriteEnvironmentVariables("before authentication");
-                    var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
+                    //var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
 
-                    var authPacket = rc.Authenticate(userName, password);
-                    if (Config.Settings.NAS_IDENTIFIER != null)
-                    {
-                        authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
-                    }
+                    //var authPacket = rc.Authenticate(userName, password);
+                    //if (Config.Settings.NAS_IDENTIFIER != null)
+                    //{
+                    //    authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
+                    //}
 
-                    authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
-                    authPacket.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
+                    //authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
+                    //authPacket.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
 
-                    var receivedPacket = rc.SendAndReceivePacket(authPacket, server.retries).Result;
+                    var receivedPacket = rc.SendAndReceivePacket(CreatePacket(rc, userName, password), server.retries).Result;
 
                     if (receivedPacket == null)
                     {
@@ -266,14 +266,14 @@ namespace auth
                     }
 
 
-                    Log.InformationLog.WriteLine("List of the attributes received");
-                    foreach (var attribute in receivedPacket.Attributes)
-                    {
-                        Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
-                    }
-
                     if (receivedPacket != null)
                     {
+                        Log.InformationLog.WriteLine("List of the attributes received");
+                        foreach (var attribute in receivedPacket.Attributes)
+                        {
+                            Log.InformationLog.WriteLine(attribute.Type.ToString() + " " + attribute.Value);
+                        }
+
                         //Depending of the packet response type, we have to manage different cases
                         switch (receivedPacket.PacketType)
                         {
@@ -290,12 +290,14 @@ namespace auth
                             case RadiusCode.ACCESS_CHALLENGE:
                                 //WriteEnvironmentVariables("starting access challenge");
                                 Log.InformationLog.WriteLine("Starting the access challenge for user {0}", userName);
-                                var packet = new RadiusPacket(RadiusCode.ACCESS_REQUEST);
+                                //var packet = new RadiusPacket(RadiusCode.ACCESS_REQUEST);
+                                var packet = CreatePacket(rc, userName, doubleFactor);
                                 packet.SetAttribute(receivedPacket.Attributes.First(x => x.Type == RadiusAttributeType.STATE));
-                                packet.SetAuthenticator(server.sharedsecret);
-                                byte[] data = Utils.EncodePapPassword(Encoding.ASCII.GetBytes(doubleFactor), packet.Authenticator, server.sharedsecret);
-                                packet.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_PASSWORD, data));
-                                packet.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
+                                //packet.SetIdentifier((Guid.NewGuid().ToByteArray())[0]);
+                                //packet.SetAuthenticator();
+                                //byte[] data = Utils.EncodePapPassword(Encoding.ASCII.GetBytes(doubleFactor), authPacket.Authenticator, server.sharedsecret);
+                                //packet.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_PASSWORD, data));
+                                //packet.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
                                 var returnPacketForChallenge = rc.SendAndReceivePacket(packet).Result;
 
                                 //WriteEnvironmentVariables("after access challenge");
@@ -349,6 +351,21 @@ namespace auth
             }
         }
 
+        private static RadiusPacket CreatePacket(RadiusClient radiusClient, string userName, string password)
+        {
+            var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
+
+            var authPacket = radiusClient.Authenticate(userName, password);
+            if (Config.Settings.NAS_IDENTIFIER != null)
+            {
+                authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
+            }
+
+            authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
+            authPacket.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
+
+            return authPacket;
+        }
 
 
         /// <summary>
@@ -363,6 +380,8 @@ namespace auth
             var privateIpAddress = Environment.GetEnvironmentVariable("ifconfig_pool_remote_ip");
             var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
             var sessionId = Environment.GetEnvironmentVariable("session_id");
+
+            //WriteEnvironmentVariables("env at " + acct_Status_Type.ToString());
 
             if (!string.IsNullOrEmpty(commonName) && !string.IsNullOrEmpty(privateIpAddress))
             {
