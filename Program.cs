@@ -1,14 +1,13 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using auth.Logs;
-using auth.Properties;
+using Microsoft.Extensions.Configuration;
 using Radius;
 using Radius.Atributes;
 using Radius.Enums;
@@ -133,21 +132,64 @@ namespace auth
         private const string ClientDisconnect = "ClientDisconnect";
 
         /// <summary>
+        /// The list of server configurations
+        /// </summary>
+        private static List<ServerConfiguration> _serversConfiguration;
+
+        /// <summary>
+        /// The nas identifier
+        /// </summary>
+        private static string _nasIdentifier;
+
+        /// <summary>
+        /// The return codes
+        /// </summary>
+        private enum ReturnCodes
+        {
+            NoError = 0,
+            TemporaryFileNotExisting,
+            NoServerConfigured,
+            AcountingFailed,
+            AuthenticationFailed,
+            NoPathDefinedForLogs,
+            IncorrectDataInFile,
+            IncorrectDataInSecondRow,
+            IncorrectFirstArgument,
+            ErrorInAccounting,
+            ProblemWithEnvironmentVariables
+        }
+
+        /// <summary>
         /// Entry point
         /// </summary>
         /// <param name="args">Contains the path of the file with connection info (using via file)</param>
         /// <returns></returns>
         public static int Main(string[] args)
         {
-            _defaultLogFolder = Settings.Default.LogFolder;
+            //On charge la configuration
+            var configurationBuilder = new ConfigurationBuilder()
+                .AddJsonFile($"appsettings.json");
+            var configuration = configurationBuilder.Build();
+
+            //Le chemin pour le log
+            var logSection = configuration.GetSection("LogFolder");
+            //La liste des servers
+            _serversConfiguration = configuration.GetSection("ServersConfiguration").Get<List<ServerConfiguration>>();
+            _nasIdentifier = configuration.GetSection("NAS_Indentifier")?.Value;
+            _defaultLogFolder = logSection?.Value;
 
             if (string.IsNullOrEmpty(_defaultLogFolder))
             {
-                return 5;
+                return (int)ReturnCodes.NoPathDefinedForLogs;
+            }
+            if (_serversConfiguration == null)
+            {
+                Log.ErrorLog.WriteLine("No server configured");
+                return (int)ReturnCodes.NoServerConfigured;
             }
 
             InitLogger();
-            if (args != null)
+            if (args.Length > 0)
             {
                 switch (args[0])
                 {
@@ -159,14 +201,14 @@ namespace auth
                         return SendAccountingRequest(Acct_Status_Type.Stop);
                     default:
                         Log.ErrorLog.WriteLine("First argument is not correct. Use 'Authentication', 'ClientConnect' or 'ClientDisconnect' ");
-                        return 8;
+                        return (int)ReturnCodes.IncorrectFirstArgument;
 
                 }
             }
             else
             {
                 Log.ErrorLog.WriteLine("atgument cannot be null. Use 'Authentication', 'ClientConnect' or 'ClientDisconnect' ");
-                return 8;
+                return (int)ReturnCodes.IncorrectFirstArgument;
             }
         }
 
@@ -185,15 +227,15 @@ namespace auth
             if (!File.Exists(path))
             {
                 Log.ErrorLog.WriteLine($"file is not existing at path {path}");
-                return 1;
+                return (int)ReturnCodes.TemporaryFileNotExisting;
             }
 
             //The file must contains two lines
             var array = File.ReadAllLines(path);
             if (array.Length != 2)
             {
-                Log.ErrorLog.WriteLine($"file {path} is not correct");
-                return 6;
+                Log.ErrorLog.WriteLine($"file {path} is not correct. Must contains 2 lines.");
+                return (int)ReturnCodes.IncorrectDataInFile;
             }
 
             //user name is on first row
@@ -214,7 +256,7 @@ namespace auth
                 else
                 {
                     Log.ErrorLog.WriteLine("Error in authentication. The password row doesn't contains the requested elements.");
-                    return 7;
+                    return (int)ReturnCodes.IncorrectDataInSecondRow;
                 }
             }
             else
@@ -223,42 +265,24 @@ namespace auth
             }
 
 
-            if (Config.Settings == null)
-            {
-                Log.ErrorLog.WriteLine("The plugin configuration is empty/unreadable");
-                return 2;
-            }
-
-            if (Config.Settings.Servers == null || Config.Settings.Servers.Count == 0)
+            if (_serversConfiguration == null || !_serversConfiguration.Any())
             {
                 Log.ErrorLog.WriteLine("No servers found in config");
-                return 3;
+                return (int)ReturnCodes.NoServerConfigured;
             }
 
-            var res = Parallel.ForEach(Config.Settings.Servers.Cast<ServerElement>(), (server, state) =>
+            var res = Parallel.ForEach(_serversConfiguration, (server, state) =>
             {
                 Log.InformationLog.WriteLine(string.Format("server name = {0} , retries = {1}, wait = {2}, autport = {3}",
-                                                            server.Name, server.retries, server.wait, server.authport));
+                                                            server.Name, server.Retries, server.Wait, server.Authport));
 
-                var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
+                var rc = new RadiusClient(server.Name, server.Sharedsecret, server.Wait * 1000, server.Authport, server.Acctport);
 
                 Log.InformationLog.WriteLine("Radius client is initializated.");
 
                 try
                 {
-                    //WriteEnvironmentVariables("before authentication");
-                    //var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
-
-                    //var authPacket = rc.Authenticate(userName, password);
-                    //if (Config.Settings.NAS_IDENTIFIER != null)
-                    //{
-                    //    authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
-                    //}
-
-                    //authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
-                    //authPacket.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
-
-                    var receivedPacket = rc.SendAndReceivePacket(CreatePacket(rc, userName, password), server.retries).Result;
+                    var receivedPacket = rc.SendAndReceivePacket(CreatePacket(rc, userName, password), server.Retries).Result;
 
                     if (receivedPacket == null)
                     {
@@ -279,7 +303,6 @@ namespace auth
                         {
                             //MFA not activated. The access is granted
                             case RadiusCode.ACCESS_ACCEPT:
-                                //WriteEnvironmentVariables("On access accept");
                                 if (!string.IsNullOrEmpty(doubleFactor))
                                 {
                                     Log.SilentWarningLog.WriteLine("Double factor must be activated for the user {0}", userName);
@@ -288,19 +311,10 @@ namespace auth
                                 break;
                             //A radius challenge is requested
                             case RadiusCode.ACCESS_CHALLENGE:
-                                //WriteEnvironmentVariables("starting access challenge");
                                 Log.InformationLog.WriteLine("Starting the access challenge for user {0}", userName);
-                                //var packet = new RadiusPacket(RadiusCode.ACCESS_REQUEST);
                                 var packet = CreatePacket(rc, userName, doubleFactor);
                                 packet.SetAttribute(receivedPacket.Attributes.First(x => x.Type == RadiusAttributeType.STATE));
-                                //packet.SetIdentifier((Guid.NewGuid().ToByteArray())[0]);
-                                //packet.SetAuthenticator();
-                                //byte[] data = Utils.EncodePapPassword(Encoding.ASCII.GetBytes(doubleFactor), authPacket.Authenticator, server.sharedsecret);
-                                //packet.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_PASSWORD, data));
-                                //packet.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
                                 var returnPacketForChallenge = rc.SendAndReceivePacket(packet).Result;
-
-                                //WriteEnvironmentVariables("after access challenge");
 
                                 if (returnPacketForChallenge == null)
                                 {
@@ -342,23 +356,30 @@ namespace auth
             {
                 //On a parcouru tous les serveurs et on n'a rien trouvé
                 Log.ErrorLog.WriteLine(string.Format("Authentication failed for: {0}", userName));
-                return 4;
+                return (int)ReturnCodes.AuthenticationFailed;
             }
             else
             {
                 Log.SuccessLog.WriteLine(string.Format("Authentication success for user {0}", userName));
-                return 0;
+                return (int)ReturnCodes.NoError;
             }
         }
 
+        /// <summary>
+        /// Create a Radius packet
+        /// </summary>
+        /// <param name="radiusClient">the radius client to use</param>
+        /// <param name="userName">the userName</param>
+        /// <param name="password">the password</param>
+        /// <returns></returns>
         private static RadiusPacket CreatePacket(RadiusClient radiusClient, string userName, string password)
         {
             var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
 
             var authPacket = radiusClient.Authenticate(userName, password);
-            if (Config.Settings.NAS_IDENTIFIER != null)
+            if (!string.IsNullOrEmpty(_nasIdentifier))
             {
-                authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
+                authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(_nasIdentifier)));
             }
 
             authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
@@ -381,22 +402,19 @@ namespace auth
             var untrustedIp = Environment.GetEnvironmentVariable("untrusted_ip");
             var sessionId = Environment.GetEnvironmentVariable("session_id");
 
-            //WriteEnvironmentVariables("env at " + acct_Status_Type.ToString());
-
             if (!string.IsNullOrEmpty(commonName) && !string.IsNullOrEmpty(privateIpAddress))
             {
                 try
                 {
-                    //WriteEnvironmentVariables(string.Format("at acounting {0}", acct_Status_Type==Acct_Status_Type.Start ? "start": "stop" ));
-                    var res = Parallel.ForEach(Config.Settings.Servers.Cast<ServerElement>(), (server, state) =>
+                    var res = Parallel.ForEach(_serversConfiguration, (server, state) =>
                     {
-                        var rc = new RadiusClient(server.Name, server.sharedsecret, server.wait * 1000, server.authport, server.acctport);
+                        var rc = new RadiusClient(server.Name, server.Sharedsecret, server.Wait * 1000, server.Authport, server.Acctport);
 
                         var accountingPacket = new RadiusPacket(RadiusCode.ACCOUNTING_REQUEST);
                         //Int Attributes must be Big-endian cf https://www.ietf.org/rfc/rfc2865.txt page 24
-                        if (Config.Settings.NAS_IDENTIFIER != null)
+                        if (!string.IsNullOrEmpty(_nasIdentifier))
                         {
-                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(Config.Settings.NAS_IDENTIFIER)));
+                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(_nasIdentifier)));
                         }
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, Utils.GetNetworkBytes((int)acct_Status_Type)));
@@ -423,9 +441,9 @@ namespace auth
                         }
 
                         Log.InformationLog.WriteLine("Set the authenticator");
-                        accountingPacket.SetAuthenticator(server.sharedsecret);
+                        accountingPacket.SetAuthenticator(server.Sharedsecret);
 
-                        var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket, server.retries).Result;
+                        var accountingPacketResponse = rc.SendAndReceivePacket(accountingPacket, server.Retries).Result;
 
                         if (accountingPacketResponse != null)
                         {
@@ -459,21 +477,19 @@ namespace auth
                     {
                         //On a parcouru tous les serveurs et on n'a rien trouvé
                         Log.ErrorLog.WriteLine(string.Format("Accounting {0}  failed for: {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
-                        //Mettre une valeur > 0 quand debuggge fini
-                        return 0;
+                        return (int)ReturnCodes.AcountingFailed;
                     }
                     else
                     {
                         Log.SuccessLog.WriteLine(string.Format("Accounting {0} success for user {1}", acct_Status_Type == Acct_Status_Type.Start ? "Start" : "Stop", commonName));
-                        return 0;
+                        return (int)ReturnCodes.NoError;
                     }
                 }
                 catch (Exception ex)
                 {
                     Log.ErrorLog.WriteLine("Error during sending accounting request");
                     Log.ErrorLog.WriteLine(ex);
-                    //Mettre une valeur > 0 quand debuggge fini
-                    return 0;
+                    return (int)ReturnCodes.ErrorInAccounting;
                 }
             }
             else
@@ -486,8 +502,7 @@ namespace auth
                 {
                     Log.ErrorLog.WriteLine("The environment variable for trusted_ip is null. Unable to send an accounting request.");
                 }
-                //Mettre une valeur > 0 quand debuggge fini
-                return 0;
+                return (int)ReturnCodes.ProblemWithEnvironmentVariables;
             }
 
         }
@@ -512,7 +527,7 @@ namespace auth
         {
             Directory.CreateDirectory(_defaultLogFolder);
             var version = Assembly.GetExecutingAssembly().GetName().Version;
-            var pid = Process.GetCurrentProcess().Id;
+            var pid = Environment.ProcessId;
             var maxN = GetMaxFileNumber(_defaultLogFolder, ErrorLogPrefixName, ApplicationLogPrefixName);
             maxN++;
             var applicationLogPath = Path.Combine(_defaultLogFolder, $"{ApplicationLogPrefixName}_{maxN:000}_{version}_{pid:00000}.txt");
