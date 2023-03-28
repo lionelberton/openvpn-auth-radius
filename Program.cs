@@ -536,8 +536,8 @@ namespace auth
             new ExceptionLogger(errorLogPath);
             _applicationLogWriterInstance = new LogMessageBase(applicationLogPath);
 
-            DeleteOldLogFiles(_defaultLogFolder, ErrorLogPrefixName, 30, 30);
-            DeleteOldLogFiles(_defaultLogFolder, ApplicationLogPrefixName, 30, 30);
+            DeleteOldLogFiles(_defaultLogFolder, ErrorLogPrefixName, 30, 500);
+            DeleteOldLogFiles(_defaultLogFolder, ApplicationLogPrefixName, 30, 500);
 
             Log.Instance.InformationLogBase = new ApplicationLogBase(true, StatusLevel.Information, _applicationLogWriterInstance);
             Log.Instance.SilentWarningLogBase = new ApplicationLogBase(true, StatusLevel.Warning, _applicationLogWriterInstance);
