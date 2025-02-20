@@ -1,4 +1,10 @@
-﻿using System;
+﻿using auth.Logs;
+using Microsoft.Extensions.Configuration;
+using Radius;
+using Radius.Utils;
+using Radius.Attributes;
+using Radius.Enum;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -6,11 +12,6 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
-using auth.Logs;
-using Microsoft.Extensions.Configuration;
-using Radius;
-using Radius.Atributes;
-using Radius.Enums;
 
 namespace auth
 {
@@ -382,7 +383,7 @@ namespace auth
                 authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(_nasIdentifier)));
             }
 
-            authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
+            authPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, RadiusUtils.GetNetworkBytes((int)NasPortType.ASYNC)));
             authPacket.SetAttribute(RadiusAttribute.CreateString(RadiusAttributeType.CALLING_STATION_ID, untrustedIp));
 
             return authPacket;
@@ -416,11 +417,11 @@ namespace auth
                         {
                             accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_IDENTIFIER, Encoding.ASCII.GetBytes(_nasIdentifier)));
                         }
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, Utils.GetNetworkBytes((int)NasPortType.ASYNC)));
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, Utils.GetNetworkBytes((int)acct_Status_Type)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.NAS_PORT_TYPE, RadiusUtils.GetNetworkBytes((int)NasPortType.ASYNC)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_STATUS_TYPE, RadiusUtils.GetNetworkBytes((int)acct_Status_Type)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_SESSION_ID, Encoding.UTF8.GetBytes(sessionId)));
                         accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.USER_NAME, Encoding.UTF8.GetBytes(commonName)));
-                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, Utils.GetNetworkBytes((int)Acct_Authentic.Radius)));
+                        accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_AUTHENTIC, RadiusUtils.GetNetworkBytes((int)Acct_Authentic.Radius)));
                         var address = privateIpAddress.Split(".");
                         var ipAsByteArray = new byte[4];
                         for (var i = 0; i < address.Length; i++)
@@ -435,9 +436,9 @@ namespace auth
                             // les attributs suivants ne doivent être settés que lors de Accounting stop
                             var byteReceived = Environment.GetEnvironmentVariable("bytes_received");
                             var bytesSent = Environment.GetEnvironmentVariable("bytes_sent");
-                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, Utils.GetNetworkBytes((int)Acct_Terminate_Cause.UserRequest)));
-                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_INPUT_OCTETS, Utils.GetNetworkBytes(int.Parse(byteReceived))));
-                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_OUTPUT_OCTETS, Utils.GetNetworkBytes(int.Parse(bytesSent))));
+                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_TERMINATE_CAUSE, RadiusUtils.GetNetworkBytes((int)Acct_Terminate_Cause.UserRequest)));
+                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_INPUT_OCTETS, RadiusUtils.GetNetworkBytes(int.Parse(byteReceived))));
+                            accountingPacket.SetAttribute(new RadiusAttribute(RadiusAttributeType.ACCT_OUTPUT_OCTETS, RadiusUtils.GetNetworkBytes(int.Parse(bytesSent))));
                         }
 
                         Log.InformationLog.WriteLine("Set the authenticator");
